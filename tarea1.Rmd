@@ -1,0 +1,350 @@
+---
+title: "Tarea 1"
+author: ""
+date: "2024-11-17"
+output: html_document
+---
+
+```{r inicialización, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(pROC)
+library(h2o)
+library(uuid)
+library(caret)
+```
+
+## Requires a logical vector of true label and a vector of predictions. Computes several classification measures from the true label and the predictions obtained from a classifier fitted to the data. Returns accuracy and auc
+
+```{r}
+get.classification.measures <- function(true.class, pred.probs) {
+     
+     true.class <- as.numeric(true.class) # convert FALSE/TRUE to 0/1
+     pred.class <- as.numeric(pred.probs > 0.5)
+     
+     cases.idx         <- which(true.class == 1)
+     controls.idx      <- which(true.class == 0)
+     
+     res <- data.frame("accuracy"=0)
+     
+     # Accuracy
+     res$accuracy <- sum(true.class == pred.class) / length(true.class)
+     
+     # Area under the Receiver-Operator Curve and Confidence Intervals
+     res$AUC <- as.numeric(pROC::auc(response = true.class, predictor = pred.probs))
+     
+     return(unlist(res))
+}
+```
+
+## It fits a deep net to data, performing a model selection internally through a random search
+
+```{r}
+deepnet.training <- function(x, y, inner.folds) {
+     y <- plyr::revalue(factor(y), c("0"="no", "1"="yes"))
+     
+     my.uuid <- gsub("-", "", UUIDgenerate())
+     
+     #split train in 80% train and 20% validation
+     train.ids = sort(sample(1:nrow(x), size = floor(nrow(x)*0.8)))
+     val.ids   = setdiff(1:nrow(x), train.ids)
+     
+     X.train = x[train.ids,]
+     X.val   = x[val.ids,]
+     Y.train = y[train.ids]
+     Y.val   = y[val.ids]
+     
+     data.train <- cbind(outcome=Y.train, as.data.frame(X.train))
+     data.train <- h2o::as.h2o(data.train, paste0("data.train.",my.uuid))
+     data.val   <- cbind(outcome=Y.val, as.data.frame(X.val))
+     data.val   <- h2o::as.h2o(data.val, paste0("data.val.",my.uuid))
+     
+     #deepnet parameters to try
+     rand_activation     <- RAND.ACTIVATION
+     rand_rho            <- seq(0.9, 0.99, 1e-3)
+     rand_epsilon        <- c(1e-10,1e-9,1e-8,1e-7,1e-6,1e-5,1e-4)
+     rand_input_dropout  <- seq(RAND.MIN.INPUT.DROPOUT, RAND.MAX.INPUT.DROPOUT, 1e-4)
+     rand_l1             <- seq(RAND.MIN.L1, RAND.MAX.L1, 1e-4)
+     rand_l2             <- seq(RAND.MIN.L2, RAND.MAX.L2, 1e-4)
+     
+     RAND.MAX.NEURONS.PER.LAYER = min(RAND.MAX.NEURONS.PER.LAYER, ncol(x))
+     MAX.RUNTIME.SECS = MAX.RUNTIME.SECS/(RAND.MAX.NUM.HIDDEN.LAYERS-RAND.MIN.NUM.HIDDEN.LAYERS+1)
+     bestgrids = list()
+     for (netsize in RAND.MIN.NUM.HIDDEN.LAYERS:RAND.MAX.NUM.HIDDEN.LAYERS) {
+          rand_hidden         <- lapply(lapply(1:500,
+                                               function(x) RAND.MIN.NEURONS.PER.LAYER+sample(RAND.MAX.NEURONS.PER.LAYER-RAND.MIN.NEURONS.PER.LAYER, netsize, replace=F)),
+                                        function(x) sort(x, decreasing = T))
+          rand_hidden_dropout <- lapply(lapply(1:500,
+                                               function (x) sample(seq(RAND.MIN.HIDDEN.DROPOUT, RAND.MAX.HIDDEN.DROPOUT, 1e-4), netsize, replace = F)),
+                                        function(x) sort(x, decreasing = T))
+          
+          hyper_params <- list(activation = rand_activation, rho = rand_rho, epsilon = rand_epsilon,
+                               hidden = rand_hidden, input_dropout_ratio = rand_input_dropout, hidden_dropout_ratios = rand_hidden_dropout,
+                               l1 = rand_l1, l2 = rand_l2)
+          search_criteria = list(strategy = "RandomDiscrete",
+                                 max_models = NUM.RANDOM.TRIALS, max_runtime_secs = MAX.RUNTIME.SECS,
+                                 seed=123456)
+          
+          model_grid <- h2o.grid("deeplearning",
+                                 grid_id = paste0("gridsize.",netsize,".",my.uuid),
+                                 hyper_params = hyper_params,
+                                 search_criteria = search_criteria,
+                                 x = colnames(x),
+                                 y = "outcome",
+                                 training_frame = data.train,
+                                 validation_frame = data.val,
+                                 balance_classes = T,
+                                 epochs = TRIAL.EPOCHS,
+                                 stopping_rounds = 3,
+                                 stopping_tolerance = 0.02,
+                                 stopping_metric = "AUC")
+          
+          aucs.train.perf = c()
+          aucs.val.perf   = c()
+          for (mi in model_grid@model_ids) {
+               aucs.train.perf = c(aucs.train.perf, h2o.auc(h2o.getModel(mi)))
+               aucs.val.perf   = c(aucs.val.perf, h2o.auc(h2o.getModel(mi), valid = T))
+          }
+          
+          #
+          bestgrids[[paste0("size",netsize)]] = h2o.getModel(model_grid@model_ids[[which.max(aucs.val.perf)]])
+     }
+     
+     #grab best deepnet and use its parameter to fit a final deepnet to the complete train set
+     best.uuid <- gsub("-", "", UUIDgenerate())
+     best.model.tried = bestgrids[[which.max(sapply(bestgrids, function(x) h2o.auc(x, valid = T)))]]
+     
+     data <- cbind(outcome=y, as.data.frame(x))
+     data <- h2o::as.h2o(data, paste0("data.",best.uuid))
+     
+     model <- h2o.deeplearning(x=colnames(x), y="outcome",
+                               training_frame = data, model_id = paste0("bestmodel.",best.uuid),
+                               activation = best.model.tried@parameters$activation,
+                               hidden = best.model.tried@parameters$hidden,
+                               epochs = EPOCHS,
+                               rho = best.model.tried@parameters$rho,
+                               epsilon = best.model.tried@parameters$epsilon,
+                               input_dropout_ratio = best.model.tried@parameters$input_dropout_ratio,
+                               hidden_dropout_ratios = best.model.tried@parameters$hidden_dropout_ratios,
+                               l1 = best.model.tried@parameters$l1,
+                               l2 = best.model.tried@parameters$l2,
+                               stopping_rounds = 3,
+                               stopping_tolerance = 0.02,
+                               stopping_metric = "AUC",
+                               balance_classes = T,
+                               export_weights_and_biases = T
+     )
+     
+     return(list(id=model@model_id, deepnet=model,
+                 parameters=unlist(model@allparameters[c("activation","rho","epsilon","hidden","epochs","input_dropout_ratio","hidden_dropout_ratios","l1","l2")])))
+}
+```
+
+## It computes predictions of newdata using a deepnet
+
+Esta función se emplea para evaluar la red entrenada.
+
+```{r}
+deepnet.predictions <- function(model, x) {
+     my.uuid     <- gsub("-", "", UUIDgenerate())
+     newdata.hex <- h2o::as.h2o(as.data.frame(x), paste0("newdata.",my.uuid))
+     predictions <- as.numeric(as.matrix(predict(model$deepnet, newdata = newdata.hex)[,"yes"]))
+     h2o::h2o.rm(paste0("newdata.",my.uuid))
+     gc()
+     
+     if (any(predictions<0)) stop("Negative probabilities predicted... Check the configuration of the trained deepnet")
+          
+     return(predictions)
+}
+```
+
+## x is the expression level of an individual gene and y is the class label
+
+```{r}
+univar.ttest <- function(x, y) {
+     controls = x[y==0]
+     cases = x[y==1]
+     
+     return(t.test(controls, cases)$p.value)
+}
+```
+
+## Performs a univariate t-test to get a p-value per gene. Then, performs a correlation test to discard highly correlated genes until less than "max.vars" are retained
+
+En esta función se emplea el estadístico t de Student para seleccionar características y reducir la dimensionalidad de los patrones (generalmente en torno al 20 %).
+
+```{r}
+ttest.feature.reduction <- function(myX, myY, pval.thres = 0.05, max.vars = 200) {
+     pvals = apply(myX, 2, function(x, y) univar.ttest(x,y), myY)
+     
+     myX = myX[, pvals < pval.thres]
+     
+     cutoff = 0.95
+     while (ncol(myX)>max.vars) {
+          cormatrix = stats::cor(as.matrix(myX))
+          hc = findCorrelation(abs(cormatrix), cutoff=cutoff) # putt any value as a "cutoff"
+          if (length(hc)>0){
+               hc = sort(hc)
+               myX = myX[,-c(hc)]
+          }
+          cutoff = cutoff-0.05
+     }
+     
+     return(colnames(myX))
+}
+```
+
+## Programa principal
+
+Este es el código del programa principal. Leemos el conjunto de datos desde el RData, obtenemos los patrones y la salida deseada y comenzamos el entrenamiento.
+
+Se inicializa un conjunto de variables globales que se emplearán para el ajuste de los parámetros de la red.
+
+**Prueba a modificar algunos de los parámetros tras haber ejecutado el código original y responde a las preguntas:**
+
+-   ¿Qué cambios has hecho? ¿Por qué?
+-   ¿Te ha surgido algún problema durante la ejecución del código?¿Cuál?¿Cómo lo has resuelto?
+-   ¿Has obtenido resultados significativamente distintos (acc, auc)?
+
+**Opcional: con el paquete glmnet, incluye en el bucle el entrenamiento de una modelo de regressión con LASSO y evalúalo (debes haberlo hecho en Minería de datos):**
+
+-   Compara los resultados obtenidos con LASSO con los que produce la red de aprendizaje profundo. ¿Es LASSO competitivo?¿Merece la pena el mayor tiempo de entrenamiento dedicado a la red?
+
+```{r}
+DATABASE = "KIPAN"
+REP.INIT = 1 #starting repetition id for several repetitions of 10-fold-CV
+REP.END  = 1 #ending repetition id for several repetitions of 10-fold-CV
+
+DATASET.FILE     = "KIPAN__illuminahiseq_rnaseqv2__Level_3__RSEM_genes_normalized.data.RData"
+SAVE.RDATA.FILE  = paste0("ttestcor-deepnet_rep_", REP.INIT, "_", REP.END, ".RData")
+SAVE.CSV.FILE    = paste0("ttestcor-deepnet_rep_", REP.INIT, "_", REP.END, ".csv")
+
+#Filtering parameters
+PVAL.THRES = 0.001
+MAX.VARS = 270
+
+#DeepNets parameters
+NUM.RANDOM.TRIALS = 500
+MAX.RUNTIME.SECS = 600  # per fold, maximum spend 10 minutes trying different deepnets to select the best one => 100 minutes to run 10-fold-CV
+TRIAL.EPOCHS = 100
+EPOCHS = 2000
+RAND.ACTIVATION = c("RectifierWithDropout","TanhWithDropout","MaxoutWithDropout")
+RAND.MIN.NUM.HIDDEN.LAYERS  = 2
+RAND.MAX.NUM.HIDDEN.LAYERS  = 4
+RAND.MIN.NEURONS.PER.LAYER  = 10
+RAND.MAX.NEURONS.PER.LAYER  = 200
+RAND.MIN.INPUT.DROPOUT      = 1e-3
+RAND.MAX.INPUT.DROPOUT      = 0.1
+RAND.MIN.HIDDEN.DROPOUT     = 1e-3
+RAND.MAX.HIDDEN.DROPOUT     = 0.1
+RAND.MIN.L1                 = 1e-3
+RAND.MAX.L1                 = 0.1
+RAND.MIN.L2                 = 1e-3
+RAND.MAX.L2                 = 0.1
+
+#cargamos los datos
+load(DATASET.FILE)
+
+set.seed(1234)
+
+# Number of observations
+N = nrow(datainfo$data)
+# Number of predictors
+P = (ncol(datainfo$data)-1)
+
+num.samples <- N
+print(paste("#samples:", num.samples))
+print(paste("#variables:", P))
+
+X = datainfo$data[,-1]
+y = datainfo$data[,1]
+
+#normalize the data
+#to avoid problems with memory, the normalization is make in two steps
+X[,1:floor(P/2)] <- scale(X[,1:floor(P/2)])
+X[,(floor(P/2)+1):P] <- scale(X[,(floor(P/2)+1):P])
+
+simul <- NULL
+perfs.mat <- matrix(NA, nrow=10*((REP.END-REP.INIT)+1), ncol=5)
+colnames(perfs.mat) <- c("repetition","acc.train","auc.train","acc.test","auc.test")
+right.row=1
+# loop over several repetitions of cross-validation
+for (rep in seq(REP.INIT, REP.END)) {
+     cat(paste0("Repetition ", rep, "\n\n"))
+     
+     #the following line obtains the folds for 10-fold CV;
+     folds <- datainfo$folds[datainfo$folds[,1]==rep, 2:ncol(datainfo$folds)]
+     
+     num.outter.folds <- ncol(folds)
+     iter.res = NULL
+     start.time = Sys.time()
+     #loop over different folds
+     for (ff in 1:num.outter.folds) {
+          cat(paste0("CV ", ff, "-fold\n"))
+          
+          #obtain the training and test ids and their respective subsets
+          train.ids   <- which(folds[, ff] != -1)
+          test.ids    <- which(folds[, ff] == -1)
+          X.train     <- X[train.ids,]
+          X.test      <- X[test.ids,]
+          Y.train     <- y[train.ids]
+          Y.test      <- y[test.ids]
+          
+          # inner folds to be used in glmnet to learn lambda
+          inner.folds <- folds[train.ids, ff]
+          
+          
+          ########################################################################################
+          # ANY FS PROCEDURE, CHI-SQUARED OR ANY OTHER HERE, in this a univariate feature selection with
+          # multiple testing correction followed by a procedure that gets rid of highly correlated genes
+          # in case more than 200 genes were retained
+          retained.features = ttest.feature.reduction(X.train, Y.train, pval.thres = PVAL.THRES, max.vars = MAX.VARS)
+          print(paste0(length(retained.features), " genes retained..."))
+          X.train = X.train[,retained.features,drop=FALSE]
+          X.test  = X.test[,retained.features,drop=FALSE]
+          
+          ########################################################################################
+          # AND NOW FIT A MODEL (LASSO, DEEPNETS, OR ANY OTHER) WITH THE RETAINED FEATURES
+          # In this case, train a deep net
+          #start (or connect) to h2o server
+          h2o.init()
+          Sys.sleep(2)
+
+          model <- deepnet.training(x=X.train, y=Y.train, inner.folds=inner.folds)
+          print(model$parameters)
+
+          ########################################################################################
+
+          #number of optimal predictors selected by lasso
+          iter.res[[paste0("cvfold",ff)]][["retained.predictors"]] <- retained.features
+          iter.res[[paste0("cvfold",ff)]][["deepnet.parameters"]]  <- model$parameters
+
+          #compute train predictions over the train set, removing the outcome since we don't know it
+          train.predictions <- deepnet.predictions(model = model, x = X.train)
+          #compute test predictions over the test set, removing the outcome since we don't know it
+          test.predictions <- deepnet.predictions(model = model, x = X.test)
+
+
+          #compute classification measures within this test-fold
+          train.auc <- get.classification.measures(true.class = Y.train, pred.probs = train.predictions)
+          test.auc  <- get.classification.measures(true.class = Y.test, pred.probs = test.predictions)
+
+          iter.res[[paste0("cvfold",ff)]][["train.perf"]] <- train.auc
+          iter.res[[paste0("cvfold",ff)]][["test.perf"]]  <- test.auc
+
+          perfs.mat[right.row,] <- c(rep, train.auc, test.auc)
+          print(perfs.mat[right.row,])
+          right.row = right.row+1
+
+          h2o.shutdown(FALSE)
+          Sys.sleep(2)
+
+          write.csv(perfs.mat, file=SAVE.CSV.FILE, quote=F, row.names=F)
+     } #end ff
+     
+     time.in.mins = as.numeric(difftime(Sys.time(), start.time, units="mins"))
+     simul[[paste0("repetition",rep)]] = list(folds=iter.res, time.in.mins=time.in.mins)
+     
+     save(simul, file=SAVE.RDATA.FILE, compress="xz")
+} #end rep
+
+```

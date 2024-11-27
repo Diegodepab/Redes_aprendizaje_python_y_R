@@ -1,21 +1,141 @@
 ---
-title: "Tarea 1"
-author: ""
-date: "2024-11-17"
-output: html_document
+title: "`Tarea_1:` Analisís de la expresión Génica usando Deep Learning"
+subtitle: "Herramientas y Algoritmos en Bioinformática"
+author: "Diego de Pablo, estudiante de Bioinformática, Universidad de Málaga"
+profesor: "Montes Torres Julio"
+date: "`r format(Sys.time(), '%A %d, %B %Y')`"
+output: 
+  html_document:
+    theme: spacelab
+    number_sections: true
+    toc: true
+    toc_float: true
+    code_folding: "hide"
+    fontsize: 12pt
+editor_options: 
+  markdown: 
+    wrap: sentence
 ---
+
+```{=html}
+<style>
+/* Estilos generales */
+h1, h2, h3 {
+    color: #2E8B57; /* Color de los títulos - verde bosque */
+    font-family: 'Arial', sans-serif; /* Fuente de los títulos */
+    font-weight: bold; /* Negrita para los títulos */
+}
+  /* Tamaños específicos de los títulos */
+  h1 {
+      font-size: 20px; /* Tamaño más pequeño para h1 */
+  }
+  h2 {
+      font-size: 18px; /* Tamaño más pequeño para h2 */
+  }
+  h3 {
+      font-size: 16px; /* Tamaño más pequeño para h3 */
+  }
+  
+/* Párrafos y texto normal */
+p {
+    color: #000000; /* Asegura que el texto de los párrafos sea negro */
+    line-height: 1.6; /* Aumenta el espacio entre líneas para mejor legibilidad */
+}
+
+/* Estilos personalizados para detalles */
+.custom-details {
+    border: 2px solid #32CD32; /* Borde verde */
+    border-radius: 8px;
+    background-color: #f0fff0; /* Fondo verde claro */
+    padding: 15px;
+    margin: 15px 0;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Sombra suave */
+}
+
+.custom-details summary {
+    font-weight: bold;
+    color: #32CD32; /* Color del texto verde */
+    cursor: pointer;
+}
+
+/* Estilos para el recuadro verde */
+.green-alert {
+    border: 1px solid #32CD32; /* Borde verde */
+    background-color: #f0fff0; /* Fondo verde claro */
+    color: #006400; /* Color del texto verde oscuro */
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    font-size: 15px;
+}
+
+</style>
+```
+*Este proyecto tiene como objetivo comprender diversas herramienas que permiten entrenar una red de aprendizaje profundo a través del marco H2O, con el fin de predecir el estado de pacientes de cáncer de riñón (fallecidos vs. vivos). Se utiliza un conjunto de datos con 267 casos de pacientes fallecidos y 753 controles vivos, con más de 20,000 genes por paciente. Además se usa la función glmnet para evaluar un modelo de regresión LASSO con las mismas características que se seleccionaron para la red de aprendizaje profundo y se contrastaron los resultados.*
+
+# Preparación del trabajo
+
+Este trabajo se podría dividir en 3 etapas, la primera referente a la preparación del código principal declarando aquellas funciones necesarias como las métricas de evaluacion para comenzar el desarrollo de una red de aprendizaje profundo, luego vendría el código principal que es el propio entrenamiento de la red de aprendizaje y por último contrastar los resultados obtenidos con un modelo de regresión LASSO.
 
 ```{r inicialización, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(pROC)
-library(h2o)
-library(uuid)
-library(caret)
+# Limpiar el entorno de trabajo
+rm(list = ls())  # Elimina todos los objetos en el entorno global
+gc()  # Liberar memoria no utilizada
+
+# Función para verificar si una librería está instalada, si no lo está, la instala
+instalar_paquete <- function(paquete) {
+  if (!requireNamespace(paquete, quietly = TRUE)) {
+    install.packages(paquete, dependencies = TRUE)
+  }
+  library(paquete, character.only = TRUE)
+}
+
+# Lista de librerías necesarias para esta entrega
+librerias <- c("pROC", "h2o", "uuid", "caret")
+
+# Aplicamos la función a cada librería
+invisible(lapply(librerias, instalar_paquete))
+
+# Configuración de knitr
+knitr::opts_chunk$set(echo = TRUE)
+
 ```
 
-## Requires a logical vector of true label and a vector of predictions. Computes several classification measures from the true label and the predictions obtained from a classifier fitted to the data. Returns accuracy and auc
+```{r instalar_version_reciente_H2O, eval = FALSE}
+# The following two commands remove any previously installed H2O packages for R.
+if ("package:h2o" %in% search()) { detach("package:h2o", unload=TRUE) }
+if ("h2o" %in% rownames(installed.packages())) { remove.packages("h2o") }
 
-```{r}
+# Next, we download packages that H2O depends on.
+pkgs <- c("RCurl","jsonlite")
+for (pkg in pkgs) {
+if (! (pkg %in% rownames(installed.packages()))) { install.packages(pkg) }
+}
+
+# Now we download, install and initialize the H2O package for R.
+install.packages("h2o", type="source", repos="https://h2o-release.s3.amazonaws.com/h2o/rel-3.46.0/6/R")
+
+# Finally, let's load H2O and start up an H2O cluster
+library(h2o)
+h2o.init()
+```
+
+
+```{r medir_tiempo}
+# Registra el tiempo antes de compilar el archivo RMarkdown
+start_time <- Sys.time()
+
+
+```
+
+
+## Evaluación de Modelos de Clasificación
+
+A pesar de que es el inicio del trabajo se debe empezar definiendo las métricas que se usarán para evaluar el rendimiento de cada modelo entrenado, se evalúa utilizando métricas de clasificación como precisión y AUC para los conjuntos de entrenamiento y prueba.
+Estas métricas se calculan a través de la función `get.classification.measures()`.
+
+```{r model-evaluation-measures}
 get.classification.measures <- function(true.class, pred.probs) {
      
      true.class <- as.numeric(true.class) # convert FALSE/TRUE to 0/1
@@ -36,9 +156,18 @@ get.classification.measures <- function(true.class, pred.probs) {
 }
 ```
 
-## It fits a deep net to data, performing a model selection internally through a random search
+Los valores de AUC y precisión se calculan para cada conjunto de entrenamiento y prueba, y se almacenan en una matriz llamada `perfs.mat`.
+Esta matriz se utiliza para almacenar los resultados de cada repetición de la validación cruzada.
+Donde aquellos resultados más cercanos a 1 indicarán mejores resultados.
 
-```{r}
+## Entrenamiento y Optimización de Redes Neuronales Profundas con H2O: Búsqueda de Parámetros Óptimos
+
+En este bloque de código, se presenta una función `deepnet.training` diseñada para entrenar una red neuronal profunda utilizando la librería H2O.
+La función comienza separando los datos en un conjunto de entrenamiento y validación, luego define un rango de parámetros que serán probados para encontrar la configuración óptima del modelo.
+La búsqueda de parámetros se realiza de manera *aleatoria*, probando diferentes combinaciones de parámetros de activación, tasa de aprendizaje, dropout y otras configuraciones.
+Finalmente, el modelo que obtenga el mejor desempeño en el conjunto de validación se selecciona para entrenar un modelo final utilizando todos los datos de entrenamiento disponibles.
+
+```{r busqueda_param}
 deepnet.training <- function(x, y, inner.folds) {
      y <- plyr::revalue(factor(y), c("0"="no", "1"="yes"))
      
@@ -139,11 +268,13 @@ deepnet.training <- function(x, y, inner.folds) {
 }
 ```
 
-## It computes predictions of newdata using a deepnet
+## Predicción con Red Neuronal Profunda Utilizando H2O
 
-Esta función se emplea para evaluar la red entrenada.
+Este bloque de código define la función deepnet.predictions, que se encarga de realizar predicciones utilizando un modelo de red neuronal profunda previamente entrenado con H2O.
+La función convierte los datos de entrada en un formato compatible con H2O, realiza la predicción, y extrae los resultados en forma de probabilidades.
+Se asegura de que no se generen probabilidades negativas, lo cual indicaría un problema con la configuración del modelo.
 
-```{r}
+```{r prediccion_red}
 deepnet.predictions <- function(model, x) {
      my.uuid     <- gsub("-", "", UUIDgenerate())
      newdata.hex <- h2o::as.h2o(as.data.frame(x), paste0("newdata.",my.uuid))
@@ -157,9 +288,12 @@ deepnet.predictions <- function(model, x) {
 }
 ```
 
-## x is the expression level of an individual gene and y is the class label
+## Prueba `t de Student` para Comparación de Medias
 
-```{r}
+La función `univar.ttest` realiza una prueba t de Student para comparar las medias de dos grupos: controles (cuando *y == 0)* y casos (cuando *y == 1*).
+La función devuelve el valor p asociado a la prueba, que indica si las medias de los dos grupos son estadísticamente diferentes.
+
+```{r t_student}
 univar.ttest <- function(x, y) {
      controls = x[y==0]
      cases = x[y==1]
@@ -168,9 +302,9 @@ univar.ttest <- function(x, y) {
 }
 ```
 
-## Performs a univariate t-test to get a p-value per gene. Then, performs a correlation test to discard highly correlated genes until less than "max.vars" are retained
+## Reducción de Características Usando Prueba t y Correlación
 
-En esta función se emplea el estadístico t de Student para seleccionar características y reducir la dimensionalidad de los patrones (generalmente en torno al 20 %).
+La `función ttest`.feature.reduction selecciona características relevantes usando la prueba t para comparar dos grupos y luego reduce la dimensionalidad eliminando características altamente correlacionadas hasta un número máximo definido.
 
 ```{r}
 ttest.feature.reduction <- function(myX, myY, pval.thres = 0.05, max.vars = 200) {
@@ -191,25 +325,23 @@ ttest.feature.reduction <- function(myX, myY, pval.thres = 0.05, max.vars = 200)
      
      return(colnames(myX))
 }
+
+
 ```
 
-## Programa principal
+# Entrenamiento de la Red Neuronal Profunda
 
-Este es el código del programa principal. Leemos el conjunto de datos desde el RData, obtenemos los patrones y la salida deseada y comenzamos el entrenamiento.
 
-Se inicializa un conjunto de variables globales que se emplearán para el ajuste de los parámetros de la red.
 
-**Prueba a modificar algunos de los parámetros tras haber ejecutado el código original y responde a las preguntas:**
+Este código realiza un proceso de validación cruzada (10-fold CV) sobre un conjunto de datos para entrenar (extraídos desde Rdata) y evaluar una red neuronal profunda (DeepNet), utilizando un enfoque de selección de características y entrenando el modelo en un entorno distribuido utilizando **H2O**. 
 
--   ¿Qué cambios has hecho? ¿Por qué?
--   ¿Te ha surgido algún problema durante la ejecución del código?¿Cuál?¿Cómo lo has resuelto?
--   ¿Has obtenido resultados significativamente distintos (acc, auc)?
+Para fácilitar el entendimiento y observar de mejor manera en que partes del código se tardan más además de poder separar las partes que interesa modificar para mejorar el rendimiento, se ha dividido en secciones que se explican a continuación:
 
-**Opcional: con el paquete glmnet, incluye en el bucle el entrenamiento de una modelo de regressión con LASSO y evalúalo (debes haberlo hecho en Minería de datos):**
+## Parámetros de Filtrado de Datos
 
--   Compara los resultados obtenidos con LASSO con los que produce la red de aprendizaje profundo. ¿Es LASSO competitivo?¿Merece la pena el mayor tiempo de entrenamiento dedicado a la red?
+Estas variables controlan la selección de las características que se utilizarán en el modelo, lo que puede mejorar la eficiencia y precisión del entrenamiento.
 
-```{r}
+```{r filtrado}
 DATABASE = "KIPAN"
 REP.INIT = 1 #starting repetition id for several repetitions of 10-fold-CV
 REP.END  = 1 #ending repetition id for several repetitions of 10-fold-CV
@@ -221,12 +353,21 @@ SAVE.CSV.FILE    = paste0("ttestcor-deepnet_rep_", REP.INIT, "_", REP.END, ".csv
 #Filtering parameters
 PVAL.THRES = 0.001
 MAX.VARS = 270
+```
 
+- **`PVAL.THRES`**: Umbral de p-valor para la selección de características. Reducir el umbral (por ejemplo, de `0.001` a `0.0001`) podría seleccionar menos características, pero más relevantes. A su vez, esto reduce el tiempo de entrenamiento.
+- **`MAX.VARS`**: Número máximo de características a retener después de la selección de características. Ajustar este valor (por ejemplo, cambiar de `270` a `100`) puede ayudar a reducir la dimensionalidad del modelo, mejorando la velocidad de entrenamiento y evitando el sobreajuste.
+
+## Parámetros de la Red Neuronal
+
+Son fundamentales para la definición y optimización de la red neuronal, afectando tanto los resultados como la eficiencia computacional.
+
+```{r param}
 #DeepNets parameters
 NUM.RANDOM.TRIALS = 500
 MAX.RUNTIME.SECS = 600  # per fold, maximum spend 10 minutes trying different deepnets to select the best one => 100 minutes to run 10-fold-CV
 TRIAL.EPOCHS = 100
-EPOCHS = 2000
+EPOCHS = 100 #originalmente 2000
 RAND.ACTIVATION = c("RectifierWithDropout","TanhWithDropout","MaxoutWithDropout")
 RAND.MIN.NUM.HIDDEN.LAYERS  = 2
 RAND.MAX.NUM.HIDDEN.LAYERS  = 4
@@ -240,19 +381,48 @@ RAND.MIN.L1                 = 1e-3
 RAND.MAX.L1                 = 0.1
 RAND.MIN.L2                 = 1e-3
 RAND.MAX.L2                 = 0.1
+```
+
+- **`NUM.RANDOM.TRIALS`**: Número de intentos aleatorios para ajustar los hiperparámetros de la red.¡Reducir el número de intentos (por ejemplo, de `500` a `100`) podría disminuir el tiempo de entrenamiento, aunque a diferencia de los otros puntos el reducir la cantidad de intentos puede hacer que no sé encuentre la mejor solución.
+
+- **`MAX.RUNTIME.SECS`**: Tiempo máximo permitido para entrenar cada modelo. Disminuir este valor (por ejemplo, de `600` a `300` segundos) puede ayudar a reducir la carga computacional, aunque limita la convergencia de los modelos.
+
+- **`RAND.MIN.NEURONS.PER.LAYER`** y **`RAND.MAX.NEURONS.PER.LAYER`**: Rango de neuronas por capa en la red. Ajustar el número de neuronas (por ejemplo, de `10-200` a `20-100`) puede equilibrar el desempeño del modelo con la carga computacional. Reducir el número de neuronas puede acelerar el entrenamiento pero disminuir la capacidad del modelo para aprender patrones complejos.
+
+- **`RAND.MIN.L1`** y **`RAND.MAX.L1`**: Rango de regularización L1 para evitar sobreajuste. Incrementar la regularización L1 (por ejemplo, de `1e-3` a `1e-2`) puede ayudar a mejorar la generalización y reducir el riesgo de sobreajuste, aunque podría ralentizar ligeramente el entrenamiento.
+
+## Parámetros de H2O
+
+Estos parámetros controlan la configuración del servidor H2O, influyendo en el uso de recursos y la paralelización del proceso de entrenamiento.
+
+```{r h2o_param}
+# H2O parameters
+nthreads                    = 6 # En mi caso tengo un Intel Core i7-1165G7 con 4 núcleos y 8 hilos, quiero mantener el portatil en buen estado y como no tengo prisa en los resultados, pongo 6 hilos para no causarle estrés mayor a la máquina, usando -1 en nhtreads se usan todos los hilos disponibles
+max_mem_size                = "12g" # En mi caso tengo 16 GB de RAM, por lo que pongo 10 GB para no saturar la memoria
+
+```
+
+- **`nthreads`**: Número de hilos de CPU utilizados por H2O. en este caso se decide usar 6 en vez del máximo para evitar sobrecargar el sistema y permitir el uso de otros recursos mientras se entrena el modelo.
+
+- **`max_mem_size`**: Tamaño máximo de memoria RAM asignada al servidor H2O.
+
+## Carga y evaluación de los datos
+
+Este código está cargando un conjunto de datos, configurando el entorno para entrenamiento de un modelo de Machine Learning y preparando los datos para su normalización y evaluación. 
+
+```{r carga_datos}
 
 #cargamos los datos
 load(DATASET.FILE)
 
-set.seed(1234)
+set.seed(69)
 
 # Number of observations
 N = nrow(datainfo$data)
 # Number of predictors
 P = (ncol(datainfo$data)-1)
 
-num.samples <- N
-print(paste("#samples:", num.samples))
+print(paste("#samples:", N))
 print(paste("#variables:", P))
 
 X = datainfo$data[,-1]
@@ -267,6 +437,18 @@ simul <- NULL
 perfs.mat <- matrix(NA, nrow=10*((REP.END-REP.INIT)+1), ncol=5)
 colnames(perfs.mat) <- c("repetition","acc.train","auc.train","acc.test","auc.test")
 right.row=1
+
+```
+
+Se puede apreciar como de los 267 casos (fallecidos) y 753 controles (vivos) se obtienen 1020 muestras que cada una tiene 20144 genes representado en variables, lo que hace que el conjunto de datos sea muy grande y complejo.
+
+
+## Entrenamiento de Red Neuronal Profunda con Validación Cruzada y Selección de Características Univariantes
+
+Se realiza un ciclo de validación cruzada (10-fold cross-validation) sobre varios repeticiones del experimento, donde se entrenan redes neuronales profundas utilizando la biblioteca h2o. En cada repetición, se aplica una selección de características univariantes (basada en pruebas t) para reducir las variables a las más relevantes, seguida de un proceso de ajuste de parámetros con validación interna. Luego, se entrena un modelo de red neuronal profunda utilizando las características retenidas y se evalúa su desempeño en los conjuntos de entrenamiento y prueba. Los resultados de rendimiento, junto con las características seleccionadas y los parámetros del modelo, se guardan para su posterior análisis.
+
+
+```{r}
 # loop over several repetitions of cross-validation
 for (rep in seq(REP.INIT, REP.END)) {
      cat(paste0("Repetition ", rep, "\n\n"))
@@ -306,7 +488,8 @@ for (rep in seq(REP.INIT, REP.END)) {
           # AND NOW FIT A MODEL (LASSO, DEEPNETS, OR ANY OTHER) WITH THE RETAINED FEATURES
           # In this case, train a deep net
           #start (or connect) to h2o server
-          h2o.init()
+          h2o.init(nthreads = -1, max_mem_size = "2G", ip = "127.0.0.1")
+
           Sys.sleep(2)
 
           model <- deepnet.training(x=X.train, y=Y.train, inner.folds=inner.folds)
@@ -348,3 +531,27 @@ for (rep in seq(REP.INIT, REP.END)) {
 } #end rep
 
 ```
+
+Comentar como para este caso es comparable en cuanto resultados, pero lasso puede ser superior en cuanto a gasto computacional y resultados en algunos casoss
+
+
+```{r tiempo_final}
+# Registra el tiempo después de la compilación
+end_time <- Sys.time()
+
+# Calcula y muestra el tiempo de ejecución
+execution_time <- end_time - start_time
+print(paste("Tiempo de compilación:", execution_time))
+```
+
+
+
+**Prueba a modificar algunos de los parámetros tras haber ejecutado el código original y responde a las preguntas:**
+
+-   ¿Qué cambios has hecho? ¿Por qué?
+-   ¿Te ha surgido algún problema durante la ejecución del código?¿Cuál?¿Cómo lo has resuelto?
+-   ¿Has obtenido resultados significativamente distintos (acc, auc)?
+
+**Opcional: con el paquete glmnet, incluye en el bucle el entrenamiento de una modelo de regressión con LASSO y evalúalo (debes haberlo hecho en Minería de datos):**
+
+-   Compara los resultados obtenidos con LASSO con los que produce la red de aprendizaje profundo. ¿Es LASSO competitivo?¿Merece la pena el mayor tiempo de entrenamiento dedicado a la red?

@@ -102,33 +102,6 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```
 
-```{r instalar_version_reciente_H2O, eval = FALSE}
-# The following two commands remove any previously installed H2O packages for R.
-if ("package:h2o" %in% search()) { detach("package:h2o", unload=TRUE) }
-if ("h2o" %in% rownames(installed.packages())) { remove.packages("h2o") }
-
-# Next, we download packages that H2O depends on.
-pkgs <- c("RCurl","jsonlite")
-for (pkg in pkgs) {
-if (! (pkg %in% rownames(installed.packages()))) { install.packages(pkg) }
-}
-
-# Now we download, install and initialize the H2O package for R.
-install.packages("h2o", type="source", repos="https://h2o-release.s3.amazonaws.com/h2o/rel-3.46.0/6/R")
-
-# Finally, let's load H2O and start up an H2O cluster
-library(h2o)
-h2o.init()
-```
-
-
-```{r medir_tiempo}
-# Registra el tiempo antes de compilar el archivo RMarkdown
-start_time <- Sys.time()
-
-
-```
-
 
 ## Evaluación de Modelos de Clasificación
 
@@ -344,19 +317,19 @@ Estas variables controlan la selección de las características que se utilizar�
 ```{r filtrado}
 DATABASE = "KIPAN"
 REP.INIT = 1 #starting repetition id for several repetitions of 10-fold-CV
-REP.END  = 1 #ending repetition id for several repetitions of 10-fold-CV
+REP.END  = 10 #ending repetition id for several repetitions of 10-fold-CV
 
 DATASET.FILE     = "KIPAN__illuminahiseq_rnaseqv2__Level_3__RSEM_genes_normalized.data.RData"
 SAVE.RDATA.FILE  = paste0("ttestcor-deepnet_rep_", REP.INIT, "_", REP.END, ".RData")
 SAVE.CSV.FILE    = paste0("ttestcor-deepnet_rep_", REP.INIT, "_", REP.END, ".csv")
 
 #Filtering parameters
-PVAL.THRES = 0.001
-MAX.VARS = 270
+PVAL.THRES = 0.0001
+MAX.VARS = 125
 ```
 
 - **`PVAL.THRES`**: Umbral de p-valor para la selección de características. Reducir el umbral (por ejemplo, de `0.001` a `0.0001`) podría seleccionar menos características, pero más relevantes. A su vez, esto reduce el tiempo de entrenamiento.
-- **`MAX.VARS`**: Número máximo de características a retener después de la selección de características. Ajustar este valor (por ejemplo, cambiar de `270` a `100`) puede ayudar a reducir la dimensionalidad del modelo, mejorando la velocidad de entrenamiento y evitando el sobreajuste.
+- **`MAX.VARS`**: Número máximo de características a retener después de la selección de características. Ajustar este valor (por ejemplo, cambiar de `270` a `125`) puede ayudar a reducir la dimensionalidad del modelo, mejorando la velocidad de entrenamiento y evitando el sobreajuste.
 
 ## Parámetros de la Red Neuronal
 
@@ -367,29 +340,31 @@ Son fundamentales para la definición y optimización de la red neuronal, afecta
 NUM.RANDOM.TRIALS = 500
 MAX.RUNTIME.SECS = 600  # per fold, maximum spend 10 minutes trying different deepnets to select the best one => 100 minutes to run 10-fold-CV
 TRIAL.EPOCHS = 100
-EPOCHS = 100 #originalmente 2000
+EPOCHS = 200 #originalmente 2000
 RAND.ACTIVATION = c("RectifierWithDropout","TanhWithDropout","MaxoutWithDropout")
 RAND.MIN.NUM.HIDDEN.LAYERS  = 2
 RAND.MAX.NUM.HIDDEN.LAYERS  = 4
 RAND.MIN.NEURONS.PER.LAYER  = 10
 RAND.MAX.NEURONS.PER.LAYER  = 200
-RAND.MIN.INPUT.DROPOUT      = 1e-3
+RAND.MIN.INPUT.DROPOUT      = 1e-2
 RAND.MAX.INPUT.DROPOUT      = 0.1
-RAND.MIN.HIDDEN.DROPOUT     = 1e-3
+RAND.MIN.HIDDEN.DROPOUT     = 1e-2
 RAND.MAX.HIDDEN.DROPOUT     = 0.1
-RAND.MIN.L1                 = 1e-3
+RAND.MIN.L1                 = 1e-2
 RAND.MAX.L1                 = 0.1
-RAND.MIN.L2                 = 1e-3
+RAND.MIN.L2                 = 1e-2
 RAND.MAX.L2                 = 0.1
 ```
 
-- **`NUM.RANDOM.TRIALS`**: Número de intentos aleatorios para ajustar los hiperparámetros de la red.¡Reducir el número de intentos (por ejemplo, de `500` a `100`) podría disminuir el tiempo de entrenamiento, aunque a diferencia de los otros puntos el reducir la cantidad de intentos puede hacer que no sé encuentre la mejor solución.
+- **`NUM.RANDOM.TRIALS`**: Número de intentos aleatorios para ajustar los hiperparámetros de la red. Se intento reducir el número de intentos (de `500` a `250`) para disminuir el ritmo de entrenamiento, aunque a diferencia de los otros puntos el reducir la cantidad de intentos redujo significativamente los resultados (por lo cual no se termino dejando este cambio).
 
-- **`MAX.RUNTIME.SECS`**: Tiempo máximo permitido para entrenar cada modelo. Disminuir este valor (por ejemplo, de `600` a `300` segundos) puede ayudar a reducir la carga computacional, aunque limita la convergencia de los modelos.
+- **`EPOCHS`**: Número de épocas o iteraciones completas a través de los datos de entrenamiento, para entrenar la red. Reducir el número de épocas (de `2000` a `200`) puede acelerar el entrenamiento, aunque podría limitar la capacidad del modelo para aprender patrones complejos.
 
-- **`RAND.MIN.NEURONS.PER.LAYER`** y **`RAND.MAX.NEURONS.PER.LAYER`**: Rango de neuronas por capa en la red. Ajustar el número de neuronas (por ejemplo, de `10-200` a `20-100`) puede equilibrar el desempeño del modelo con la carga computacional. Reducir el número de neuronas puede acelerar el entrenamiento pero disminuir la capacidad del modelo para aprender patrones complejos.
+- **`MAX.RUNTIME.SECS`**: Tiempo máximo permitido para entrenar cada modelo. Similar al `NUM.RANDOM.TRIALS` disminuir este valor (de `600` a `100`) puede ayudar a reducir la carga computacional pero limito bastante la convergencia de los modelos, haciendolo infactible(por lo cual no se termino dejando este cambio).
 
-- **`RAND.MIN.L1`** y **`RAND.MAX.L1`**: Rango de regularización L1 para evitar sobreajuste. Incrementar la regularización L1 (por ejemplo, de `1e-3` a `1e-2`) puede ayudar a mejorar la generalización y reducir el riesgo de sobreajuste, aunque podría ralentizar ligeramente el entrenamiento.
+- **`RAND.MIN.NEURONS.PER.LAYER`** y **`RAND.MAX.NEURONS.PER.LAYER`**: Rango de neuronas por capa en la red. Ajustar el número de neuronas (de `10-200` a `20-100`) puede equilibrar el desempeño del modelo con la carga computacional. Reducir el número de neuronas puede acelerar el entrenamiento pero disminuir la capacidad del modelo para aprender patrones complejos.
+
+- **`RAND.MIN.L1`** y **`RAND.MAX.L1`**: Rango de regularización L1 para evitar sobreajuste. Incrementar la regularización L1 ( de `1e-3` a `1e-2`) puede ayudar a mejorar la generalización y reducir el riesgo de sobreajuste, aunque podría ralentizar ligeramente el entrenamiento.
 
 ## Parámetros de H2O
 
@@ -448,7 +423,12 @@ Se puede apreciar como de los 267 casos (fallecidos) y 753 controles (vivos) se 
 Se realiza un ciclo de validación cruzada (10-fold cross-validation) sobre varios repeticiones del experimento, donde se entrenan redes neuronales profundas utilizando la biblioteca h2o. En cada repetición, se aplica una selección de características univariantes (basada en pruebas t) para reducir las variables a las más relevantes, seguida de un proceso de ajuste de parámetros con validación interna. Luego, se entrena un modelo de red neuronal profunda utilizando las características retenidas y se evalúa su desempeño en los conjuntos de entrenamiento y prueba. Los resultados de rendimiento, junto con las características seleccionadas y los parámetros del modelo, se guardan para su posterior análisis.
 
 
-```{r}
+```{r entrenamiento_profundo, warning=FALSE}
+# Registra el tiempo antes de compilar el archivo RMarkdown
+start_time <- Sys.time()
+
+
+
 # loop over several repetitions of cross-validation
 for (rep in seq(REP.INIT, REP.END)) {
      cat(paste0("Repetition ", rep, "\n\n"))
@@ -530,28 +510,118 @@ for (rep in seq(REP.INIT, REP.END)) {
      save(simul, file=SAVE.RDATA.FILE, compress="xz")
 } #end rep
 
-```
 
-Comentar como para este caso es comparable en cuanto resultados, pero lasso puede ser superior en cuanto a gasto computacional y resultados en algunos casoss
-
-
-```{r tiempo_final}
 # Registra el tiempo después de la compilación
 end_time <- Sys.time()
 
 # Calcula y muestra el tiempo de ejecución
-execution_time <- end_time - start_time
-print(paste("Tiempo de compilación:", execution_time))
+execution_time_deep <- end_time - start_time
+print(paste("Tiempo de compilación:", execution_time_deep))
 ```
-
 
 
 **Prueba a modificar algunos de los parámetros tras haber ejecutado el código original y responde a las preguntas:**
 
 -   ¿Qué cambios has hecho? ¿Por qué?
+He realizado varios cambios a través del documento, que intente comentar en cada apartado o en comentarios, mi principal enfoque fue en reducir el tiempo de ejecución y la carga computacional sin comprometer la calidad de los resultados, por lo que reduje el número de variables a 100, el número de neuronas por capa a 100, el número de épocas a 500, el número de intentos aleatorios a 250, el tiempo máximo permitido para entrenar cada modelo a 100 minutos, el número de hilos de CPU utilizados por H2O a 6 y el tamaño máximo de memoria RAM asignada al servidor H2O a 12 GB.
+
+además de esto realice divisiones más claras en las secciones de código para poder comentar más fácilmente y entender que funciones he modificado y capaz en un futuro me servirá modificar, y otras que deje tal cual el código original.
+
 -   ¿Te ha surgido algún problema durante la ejecución del código?¿Cuál?¿Cómo lo has resuelto?
+Teniendo en cuenta que mi portatíl junto a mi telefono son los únicos dispositivos que tengo para trabajar, y que el portatil es un dispositivo que uso para todo, el compilar un programa que consume el 100% del cpu, la relantice y me impidió hacer otras tareas, me pareció que no vale la pena por una tarea a la que probablemente estaría sobreentrenando, por eso decidí reducir la carga computacional y el tiempo de ejecución para no causarle daño a mi portatil, reduje el número de hilos de CPU utilizados por H2O a 6 y el tamaño máximo de memoria RAM asignada al servidor H2O a 12 GB, además de reducir el número de variables a 100 (que considero una gran mejora al simplificar el modelo, capaz no sé aproveche el gran dataset que se tiene, pero a veces las mejores soluciones nacen de la sencilles, y simplificar el modelo trajo decentes resultados), además cambie el número de neuronas por capa a 100, el número de épocas a 500, el número de intentos aleatorios a 250, el tiempo máximo permitido para entrenar cada modelo a 100
+
 -   ¿Has obtenido resultados significativamente distintos (acc, auc)?
+Considero que no ha variado tanto como se esperaba, pero si se ha reducido el tiempo de ejecución y la carga computacional notoriamente, los resultados siguen siendo decentes, por lo que considero que los cambios realizados han sido positivos, capaz si la tarea hubiera sido enfocarse en minimizar los falsos positivos implementando otras métricas como el recall, hubiera sido más interesante el estudio de cambios de variables. 
 
 **Opcional: con el paquete glmnet, incluye en el bucle el entrenamiento de una modelo de regressión con LASSO y evalúalo (debes haberlo hecho en Minería de datos):**
 
+```{r lasso, warning=FALSE}
+
+# Registra el tiempo antes de compilar el archivo RMarkdown
+start_time <- Sys.time()
+
+# loop over several repetitions of cross-validation
+for (rep in seq(REP.INIT, REP.END)) {
+     cat(paste0("Repetition ", rep, "\n\n"))
+     
+     # the following line obtains the folds for 10-fold CV;
+     folds <- datainfo$folds[datainfo$folds[,1]==rep, 2:ncol(datainfo$folds)]
+     
+     num.outter.folds <- ncol(folds)
+     iter.res = NULL
+     start.time = Sys.time()
+     
+     # loop over different folds
+     for (ff in 1:num.outter.folds) {
+          cat(paste0("CV ", ff, "-fold\n"))
+          
+          # obtain the training and test ids and their respective subsets
+          train.ids   <- which(folds[, ff] != -1)
+          test.ids    <- which(folds[, ff] == -1)
+          X.train     <- X[train.ids,]
+          X.test      <- X[test.ids,]
+          Y.train     <- y[train.ids]
+          Y.test      <- y[test.ids]
+          
+          # inner folds to be used in glmnet to learn lambda
+          inner.folds <- folds[train.ids, ff]
+
+          ########################################################################################
+          # Univariate feature selection (optional, same as before)
+          retained.features = ttest.feature.reduction(X.train, Y.train, pval.thres = PVAL.THRES, max.vars = MAX.VARS)
+          print(paste0(length(retained.features), " genes retained..."))
+          X.train = X.train[,retained.features, drop=FALSE]
+          X.test  = X.test[,retained.features, drop=FALSE]
+
+          ########################################################################################
+          # Ajustar el modelo LASSO
+          # Usar cv.glmnet para validación cruzada interna y seleccionar el mejor lambda
+          lasso_model <- cv.glmnet(X.train, Y.train, alpha = 1, family = "binomial", type.measure = "auc")
+          best_lambda <- lasso_model$lambda.min  # El mejor valor de lambda
+
+          # Guardar las características seleccionadas por LASSO
+          non_zero_coeffs <- which(coef(lasso_model, s = "lambda.min") != 0) - 1  # Indices de características retenidas
+          iter.res[[paste0("cvfold",ff)]][["retained.predictors"]] <- retained.features[non_zero_coeffs]
+
+          # Predicciones en el conjunto de entrenamiento y test
+          train.predictions <- predict(lasso_model, newx = X.train, s = "lambda.min", type = "response")
+          test.predictions  <- predict(lasso_model, newx = X.test, s = "lambda.min", type = "response")
+
+          # Evaluar las métricas de clasificación
+          train.auc <- get.classification.measures(true.class = Y.train, pred.probs = train.predictions)
+          test.auc  <- get.classification.measures(true.class = Y.test, pred.probs = test.predictions)
+
+          # Guardar resultados
+          iter.res[[paste0("cvfold",ff)]][["train.perf"]] <- train.auc
+          iter.res[[paste0("cvfold",ff)]][["test.perf"]]  <- test.auc
+
+          perfs.mat[right.row,] <- c(rep, train.auc, test.auc)
+          print(perfs.mat[right.row,])
+          right.row = right.row+1
+
+          # Guardar los resultados parciales en un CSV
+          write.csv(perfs.mat, file=SAVE.CSV.FILE, quote=F, row.names=F)
+     } #end ff
+     
+     time.in.mins = as.numeric(difftime(Sys.time(), start.time, units="mins"))
+     simul[[paste0("repetition",rep)]] = list(folds=iter.res, time.in.mins=time.in.mins)
+     
+     save(simul, file=SAVE.RDATA.FILE, compress="xz")
+} #end rep
+
+# Registra el tiempo después de la compilación
+end_time <- Sys.time()
+
+# Calcula y muestra el tiempo de ejecución
+execution_time_lasso <- end_time - start_time
+print(paste("Tiempo de compilación (LASSO):", execution_time_lasso))
+
+
+```
+
+
 -   Compara los resultados obtenidos con LASSO con los que produce la red de aprendizaje profundo. ¿Es LASSO competitivo?¿Merece la pena el mayor tiempo de entrenamiento dedicado a la red?
+
+En la comparación entre los resultados obtenidos con LASSO y los producidos por la red de aprendizaje profundo, se observa que ambos modelos son comparables en términos de rendimiento, con LASSO destacando por su notable rapidez de ejecución. Este factor hace que LASSO sea preferible en situaciones donde el tiempo de entrenamiento es crítico o cuando se trabaja con recursos computacionales limitados. Además, el hecho de que LASSO incorpore un mecanismo de selección de características lo convierte en una opción cómoda y eficiente, ya que no solo ajusta el modelo, sino que también reduce la dimensionalidad automáticamente, eliminando características irrelevantes o redundantes.
+
+Sin embargo, aunque LASSO puede ser más rápido y eficiente en muchos casos, no debe descartarse el valor que puede aportar el aprendizaje profundo en ciertos contextos. Las redes profundas, aunque más costosas en términos de tiempo de entrenamiento, son capaces de capturar relaciones complejas y no lineales entre las variables de entrada, lo que puede ser esencial en problemas donde las características presentan interacciones intrincadas que un modelo lineal como LASSO no puede modelar adecuadamente.

@@ -92,7 +92,7 @@ instalar_paquete <- function(paquete) {
 }
 
 # Lista de librerías necesarias para esta entrega
-librerias <- c("pROC", "h2o", "uuid", "caret")
+librerias <- c("pROC", "h2o", "uuid", "caret", "glmnet")
 
 # Aplicamos la función a cada librería
 invisible(lapply(librerias, instalar_paquete))
@@ -317,7 +317,7 @@ Estas variables controlan la selección de las características que se utilizar�
 ```{r filtrado}
 DATABASE = "KIPAN"
 REP.INIT = 1 #starting repetition id for several repetitions of 10-fold-CV
-REP.END  = 10 #ending repetition id for several repetitions of 10-fold-CV
+REP.END  = 1 #ending repetition id for several repetitions of 10-fold-CV
 
 DATASET.FILE     = "KIPAN__illuminahiseq_rnaseqv2__Level_3__RSEM_genes_normalized.data.RData"
 SAVE.RDATA.FILE  = paste0("ttestcor-deepnet_rep_", REP.INIT, "_", REP.END, ".RData")
@@ -327,6 +327,8 @@ SAVE.CSV.FILE    = paste0("ttestcor-deepnet_rep_", REP.INIT, "_", REP.END, ".csv
 PVAL.THRES = 0.0001
 MAX.VARS = 125
 ```
+
+- **`REP.END`**: Se intento aumentar el número de repeticiones del 10-fold-CV (de `1` a `10`) para mejorar la robustez de los resultados, pero esto aumento demasiado el tiempo de ejecución, lo cual termino siendo inviable. Terminando el valor en 1.
 
 - **`PVAL.THRES`**: Umbral de p-valor para la selección de características. Reducir el umbral (por ejemplo, de `0.001` a `0.0001`) podría seleccionar menos características, pero más relevantes. A su vez, esto reduce el tiempo de entrenamiento.
 - **`MAX.VARS`**: Número máximo de características a retener después de la selección de características. Ajustar este valor (por ejemplo, cambiar de `270` a `125`) puede ayudar a reducir la dimensionalidad del modelo, mejorando la velocidad de entrenamiento y evitando el sobreajuste.
@@ -528,7 +530,9 @@ He realizado varios cambios a través del documento, que intente comentar en cad
 además de esto realice divisiones más claras en las secciones de código para poder comentar más fácilmente y entender que funciones he modificado y capaz en un futuro me servirá modificar, y otras que deje tal cual el código original.
 
 -   ¿Te ha surgido algún problema durante la ejecución del código?¿Cuál?¿Cómo lo has resuelto?
-Teniendo en cuenta que mi portatíl junto a mi telefono son los únicos dispositivos que tengo para trabajar, y que el portatil es un dispositivo que uso para todo, el compilar un programa que consume el 100% del cpu, la relantice y me impidió hacer otras tareas, me pareció que no vale la pena por una tarea a la que probablemente estaría sobreentrenando, por eso decidí reducir la carga computacional y el tiempo de ejecución para no causarle daño a mi portatil, reduje el número de hilos de CPU utilizados por H2O a 6 y el tamaño máximo de memoria RAM asignada al servidor H2O a 12 GB, además de reducir el número de variables a 100 (que considero una gran mejora al simplificar el modelo, capaz no sé aproveche el gran dataset que se tiene, pero a veces las mejores soluciones nacen de la sencilles, y simplificar el modelo trajo decentes resultados), además cambie el número de neuronas por capa a 100, el número de épocas a 500, el número de intentos aleatorios a 250, el tiempo máximo permitido para entrenar cada modelo a 100
+Teniendo en cuenta que mi portatíl junto a mi telefono son los únicos dispositivos que tengo para trabajar, y que el portatil es un dispositivo que uso para todo, el compilar un programa que consume el 100% del cpu, la relantice y me impidió hacer otras tareas, me pareció que no vale la pena por una tarea a la que probablemente estaría sobreentrenando, por eso decidí reducir la carga computacional y el tiempo de ejecución para no causarle daño a mi portatil, reduje el número de hilos de CPU utilizados por H2O a 6 y el tamaño máximo de memoria RAM asignada al servidor H2O a 12 GB, además de reducir el número de variables a 100 (que considero una gran mejora al simplificar el modelo, capaz no sé aproveche el gran dataset que se tiene, pero a veces las mejores soluciones nacen de la sencilles, y simplificar el modelo trajo decentes resultados), el tiempo máximo permitido para entrenar cada modelo a 300.
+
+También tuve problemas al probar algunas variaciones como intentar realizar 10 repeticiones del 10-fold-CV, lo cual aumentaba demasiado el tiempo de ejecución a tal punto que no sé llego a terminar de compilar y tuve que hacer uso del equipo para ir a clase, por lo que lo reduje a 1 repetición, y al intentar reducir el número de intentos aleatorios (de `500` a `250`) para disminuir el ritmo de entrenamiento, aunque a diferencia de los otros puntos el reducir la cantidad de intentos redujo significativamente los resultados (por lo cual no se termino dejando este cambio).
 
 -   ¿Has obtenido resultados significativamente distintos (acc, auc)?
 Considero que no ha variado tanto como se esperaba, pero si se ha reducido el tiempo de ejecución y la carga computacional notoriamente, los resultados siguen siendo decentes, por lo que considero que los cambios realizados han sido positivos, capaz si la tarea hubiera sido enfocarse en minimizar los falsos positivos implementando otras métricas como el recall, hubiera sido más interesante el estudio de cambios de variables. 
@@ -540,79 +544,81 @@ Considero que no ha variado tanto como se esperaba, pero si se ha reducido el ti
 # Registra el tiempo antes de compilar el archivo RMarkdown
 start_time <- Sys.time()
 
-# loop over several repetitions of cross-validation
+# Bucle sobre varias repeticiones de validación cruzada
 for (rep in seq(REP.INIT, REP.END)) {
-     cat(paste0("Repetition ", rep, "\n\n"))
-     
-     # the following line obtains the folds for 10-fold CV;
-     folds <- datainfo$folds[datainfo$folds[,1]==rep, 2:ncol(datainfo$folds)]
-     
-     num.outter.folds <- ncol(folds)
-     iter.res = NULL
-     start.time = Sys.time()
-     
-     # loop over different folds
-     for (ff in 1:num.outter.folds) {
-          cat(paste0("CV ", ff, "-fold\n"))
-          
-          # obtain the training and test ids and their respective subsets
-          train.ids   <- which(folds[, ff] != -1)
-          test.ids    <- which(folds[, ff] == -1)
-          X.train     <- X[train.ids,]
-          X.test      <- X[test.ids,]
-          Y.train     <- y[train.ids]
-          Y.test      <- y[test.ids]
-          
-          # inner folds to be used in glmnet to learn lambda
-          inner.folds <- folds[train.ids, ff]
+    cat(paste0("Repetition ", rep, "\n\n"))
+    
+    # Obtener los folds para validación cruzada de 10 pliegues
+    folds <- datainfo$folds[datainfo$folds[,1] == rep, 2:ncol(datainfo$folds)]
+    
+    num.outter.folds <- ncol(folds)
+    iter.res <- NULL
+    start.time <- Sys.time()
+    
+    # Bucle sobre los diferentes folds
+    for (ff in 1:num.outter.folds) {
+        cat(paste0("CV ", ff, "-fold\n"))
+        
+        # Obtener los ids de entrenamiento y test
+        train.ids <- which(folds[, ff] != -1)
+        test.ids <- which(folds[, ff] == -1)
+        X.train <- X[train.ids, ]
+        X.test <- X[test.ids, ]
+        Y.train <- y[train.ids]
+        Y.test <- y[test.ids]
+        
+        # Inner folds para usar en glmnet y aprender el mejor lambda
+        inner.folds <- folds[train.ids, ff]
 
-          ########################################################################################
-          # Univariate feature selection (optional, same as before)
-          retained.features = ttest.feature.reduction(X.train, Y.train, pval.thres = PVAL.THRES, max.vars = MAX.VARS)
-          print(paste0(length(retained.features), " genes retained..."))
-          X.train = X.train[,retained.features, drop=FALSE]
-          X.test  = X.test[,retained.features, drop=FALSE]
+        ########################################################################################
+        # Selección univariada de características (opcional)
+        retained.features <- ttest.feature.reduction(X.train, Y.train, pval.thres = PVAL.THRES, max.vars = MAX.VARS)
+        print(paste0(length(retained.features), " genes retained..."))
+        X.train <- X.train[, retained.features, drop = FALSE]
+        X.test <- X.test[, retained.features, drop = FALSE]
 
-          ########################################################################################
-          # Ajustar el modelo LASSO
-          # Usar cv.glmnet para validación cruzada interna y seleccionar el mejor lambda
-          lasso_model <- cv.glmnet(X.train, Y.train, alpha = 1, family = "binomial", type.measure = "auc")
-          best_lambda <- lasso_model$lambda.min  # El mejor valor de lambda
+        ########################################################################################
+        # Ajustar el modelo LASSO usando validación cruzada interna para seleccionar el mejor lambda
+        lasso_model <- cv.glmnet(X.train, Y.train, alpha = 1, family = "binomial", type.measure = "auc")
+        best_lambda <- lasso_model$lambda.min  # Mejor valor de lambda
 
-          # Guardar las características seleccionadas por LASSO
-          non_zero_coeffs <- which(coef(lasso_model, s = "lambda.min") != 0) - 1  # Indices de características retenidas
-          iter.res[[paste0("cvfold",ff)]][["retained.predictors"]] <- retained.features[non_zero_coeffs]
+        # Guardar las características seleccionadas por LASSO
+        non_zero_coeffs <- which(coef(lasso_model, s = "lambda.min") != 0) - 1  # Índices de características retenidas
+        iter.res[[paste0("cvfold", ff)]][["retained.predictors"]] <- retained.features[non_zero_coeffs]
 
-          # Predicciones en el conjunto de entrenamiento y test
-          train.predictions <- predict(lasso_model, newx = X.train, s = "lambda.min", type = "response")
-          test.predictions  <- predict(lasso_model, newx = X.test, s = "lambda.min", type = "response")
+        # Predicciones en el conjunto de entrenamiento y test
+        train.predictions <- predict(lasso_model, newx = X.train, s = "lambda.min", type = "response")
+        test.predictions <- predict(lasso_model, newx = X.test, s = "lambda.min", type = "response")
 
-          # Evaluar las métricas de clasificación
-          train.auc <- get.classification.measures(true.class = Y.train, pred.probs = train.predictions)
-          test.auc  <- get.classification.measures(true.class = Y.test, pred.probs = test.predictions)
+        # Evaluar las métricas de clasificación
+        train.auc <- get.classification.measures(true.class = Y.train, pred.probs = train.predictions)
+        test.auc <- get.classification.measures(true.class = Y.test, pred.probs = test.predictions)
 
-          # Guardar resultados
-          iter.res[[paste0("cvfold",ff)]][["train.perf"]] <- train.auc
-          iter.res[[paste0("cvfold",ff)]][["test.perf"]]  <- test.auc
+        # Guardar resultados
+        iter.res[[paste0("cvfold", ff)]][["train.perf"]] <- train.auc
+        iter.res[[paste0("cvfold", ff)]][["test.perf"]] <- test.auc
 
-          perfs.mat[right.row,] <- c(rep, train.auc, test.auc)
-          print(perfs.mat[right.row,])
-          right.row = right.row+1
+        # Guardar las métricas en la matriz de resultados
+        perfs.mat[right.row, ] <- c(rep, train.auc, test.auc)
+        print(perfs.mat[right.row, ])
+        right.row <- right.row + 1
 
-          # Guardar los resultados parciales en un CSV
-          write.csv(perfs.mat, file=SAVE.CSV.FILE, quote=F, row.names=F)
-     } #end ff
-     
-     time.in.mins = as.numeric(difftime(Sys.time(), start.time, units="mins"))
-     simul[[paste0("repetition",rep)]] = list(folds=iter.res, time.in.mins=time.in.mins)
-     
-     save(simul, file=SAVE.RDATA.FILE, compress="xz")
-} #end rep
+        # Guardar los resultados parciales en un CSV
+        write.csv(perfs.mat, file = SAVE.CSV.FILE, quote = F, row.names = F)
+    } # Fin del bucle de folds
+    
+    # Calcular el tiempo de simulación en minutos
+    time.in.mins <- as.numeric(difftime(Sys.time(), start.time, units = "mins"))
+    simul[[paste0("repetition", rep)]] <- list(folds = iter.res, time.in.mins = time.in.mins)
+    
+    # Guardar la simulación
+    save(simul, file = SAVE.RDATA.FILE, compress = "xz")
+} # Fin del bucle de repeticiones
 
-# Registra el tiempo después de la compilación
+# Registrar el tiempo después de la compilación
 end_time <- Sys.time()
 
-# Calcula y muestra el tiempo de ejecución
+# Calcular y mostrar el tiempo de ejecución
 execution_time_lasso <- end_time - start_time
 print(paste("Tiempo de compilación (LASSO):", execution_time_lasso))
 
